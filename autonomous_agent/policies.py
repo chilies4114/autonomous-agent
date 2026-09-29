@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 from urllib.parse import urlparse
 
 
@@ -21,11 +21,13 @@ class Policy:
         return f"URL '{url}' is outside the allowed domain list: {sorted(self.allowed_domains)}"
 
     def should_retry(self, task: Dict[str, Any], errors: List[Dict[str, Any]]) -> bool:
+        if not errors:
+            return True
         task_name = task.get("url", task.get("id", "task"))
         matching = [e for e in errors if e.get("task") == task_name]
         return len(matching) < self.max_errors_per_task
 
 
 class ResearchPolicy(Policy):
-    """Alias kept for clarity in the project."""
+    """Alias for clarity in the project."""
     pass

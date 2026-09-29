@@ -1,6 +1,8 @@
+from __future__ import annotations
+
 from dataclasses import dataclass, field
-from typing import List
 import os
+from typing import List
 
 
 @dataclass
@@ -12,6 +14,8 @@ class Settings:
     fetch_budget_per_day: int = 100
     polling_interval_seconds: int = 30
     paused: bool = False
+    model_provider: str = "none"
+    model_name: str = "gpt-4o-mini"
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -26,4 +30,6 @@ class Settings:
             fetch_budget_per_day=int(os.getenv("AUTO_AGENT_FETCH_BUDGET_PER_DAY", "100")),
             polling_interval_seconds=int(os.getenv("AUTO_AGENT_POLL_INTERVAL_SECONDS", "30")),
             paused=os.getenv("AUTO_AGENT_PAUSED", "false").lower() in {"1", "true", "yes", "on"},
+            model_provider=os.getenv("AUTO_AGENT_MODEL_PROVIDER", "none").strip() or "none",
+            model_name=os.getenv("AUTO_AGENT_MODEL_NAME", "gpt-4o-mini").strip() or "gpt-4o-mini",
         )

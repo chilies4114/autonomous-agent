@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Dict
+import os
+from typing import Dict, Optional
 from urllib.parse import urlparse
 
 import requests
@@ -12,9 +13,14 @@ class WebScraper:
         self.timeout_seconds = timeout_seconds
 
     def fetch(self, url: str) -> Dict[str, str]:
-        response = requests.get(url, timeout=self.timeout_seconds, headers={
-            "User-Agent": "autonomous-agent/0.1 (+safe-bounded-research)",
-        })
+        response = requests.get(
+            url,
+            timeout=self.timeout_seconds,
+            headers={
+                "User-Agent": "autonomous-agent/0.1 (+safe-bounded-research)",
+                "Accept": "text/html,application/xhtml+xml",
+            },
+        )
         response.raise_for_status()
 
         soup = BeautifulSoup(response.text, "html.parser")
