@@ -1,33 +1,6 @@
 # autonomous-agent
 
-A safe, bounded autonomous research agent prototype with:
-
-- 24/7 heartbeat loop
-- token / fetch budget enforcement
-- self-correction from previous errors
-- allowlisted web scraping
-- durable memory and audit trail
-
-This project is intentionally conservative: it is designed to be run in a controlled environment, with explicit allowlists, rate limits, and a stop mechanism.
-
-## What it does
-
-The agent can:
-
-- poll a task queue
-- fetch only approved domains
-- extract page metadata and text
-- store observations in a JSON-backed memory store
-- detect recent failures and adapt retry behavior
-- enforce daily token and fetch budgets
-
-## Safety model
-
-- No arbitrary shell access
-- No unrestricted network access
-- No destructive actions unless explicitly added later
-- All actions are logged to a JSON state file
-- The loop can be paused by setting `AUTO_AGENT_PAUSED=true`
+A bounded autonomous research agent with a heartbeat loop, planner, URL frontier, SQLite memory, token/fetch budgets, allowlisted scraping, and optional LLM summaries.
 
 ## Quick start
 
@@ -35,35 +8,20 @@ The agent can:
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-python -m autonomous_agent.main --interval 30 --memory-path .autonomous_agent_state.json --seed-url https://example.com
+export AUTO_AGENT_ALLOWED_DOMAINS=example.com
+python -m autonomous_agent.main --goal "Collect facts about this site" --seed-url https://example.com --interval 60
 ```
 
-## Project structure
+Set `AUTO_AGENT_PAUSED=true` to prevent execution. The default state file is SQLite at `.autonomous_agent_state.sqlite3`.
 
-```text
-autonomous_agent/
-  __init__.py
-  agent.py
-  budget.py
-  config.py
-  heartbeat.py
-  main.py
-  memory.py
-  policies.py
-  scraper.py
-requirements.txt
-README.md
-```
+## Architecture
 
-## Environment variables
+- **Planner:** turns a goal and approved seed URLs into deduplicated durable tasks.
+- **Crawler:** extracts a small number of same-allowlist links per successful page; it does not perform unrestricted recursive crawling.
+- **Memory:** SQLite stores tasks, retries, observations, errors, and decisions in a WAL-backed database.
+- **Heartbeat:** processes bounded work on each cycle and sleeps between cycles.
+- **Model layer:** optional OpenAI/OpenRouter summarization; the extractive fallback requires no model API.
 
-```bash
-export AUTO_AGENT_PAUSED=false
-export AUTO_AGENT_MAX_PER_CYCLE=5
-export AUTO_AGENT_ALLOWED_DOMAINS=example.com,news.ycombinator.com
-export AUTO_AGENT_MAX_ERRORS_PER_TASK=3
-```
+## Safety controls
 
-## Notes
-
-This is a foundation, not a fully autonomous black-box web agent. It is built to be safe and extensible so you can add model calls, database-backed memory, or approval gates later.
+`AUTO_AGENT_ALLOWED_DOMAINS`, `AUTO_AGENT_MAX_PER_CYCLE`, `AUTO_AGENT_FETCH_BUDGET_PER_DAY`, `AUTO_AGENT_TOKEN_BUDGET_PER_DAY`, and `AUTO_AGENT_MAX_ERRORS_PER_TASK` limit operation. Use a dedicated account, obey site terms and robots/rate limits, and do not add credentials or destructive tools to the agent without human approval.

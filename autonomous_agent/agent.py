@@ -5,147 +5,69 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from .budget import BudgetTracker
+from .crawler import URLFrontier
 from .memory import MemoryStore
+from .planner import ResearchPlanner
 from .policies import Policy
 from .scraper import WebScraper
 
 
 class ResearchAgent:
-    def __init__(
-        self,
-        memory_store: MemoryStore,
-        budget: BudgetTracker,
-        policy: Policy,
-        scraper: Optional[WebScraper] = None,
-        llm_client: Optional[Any] = None,
-    ):
+    def __init__(self, memory_store: MemoryStore, budget: BudgetTracker, policy: Policy,
+                 scraper: Optional[WebScraper] = None, llm_client: Optional[Any] = None,
+                 planner: Optional[ResearchPlanner] = None):
         self.memory = memory_store
         self.budget = budget
         self.policy = policy
         self.scraper = scraper or WebScraper()
         self.llm_client = llm_client
+        self.frontier = URLFrontier(policy, self.scraper)
+        self.planner = planner or ResearchPlanner(memory_store, policy.max_pages_per_cycle)
         self.logger = logging.getLogger("autonomous-agent")
-
-    def _seed_default_tasks(self) -> None:
-        state = self.memory.load()
-        if state.get("queue"):
-            return
-
-        state["queue"] = [
-            {"id": "seed-demo", "url": "https://example.com", "goal": "Fetch a safe example page."},
-        ]
-        self.memory.save(state)
 
     def _now(self) -> str:
         return datetime.now(timezone.utc).isoformat()
 
-    def _summarize_page(self, task: Dict[str, Any], result: Dict[str, str]) -> str:
-        if self.llm_client is None:
-            snippet = result.get("text", "")
-            return snippet[:220].strip() or f"Fetched {result.get('url')}"
+    def submit_goal(self, goal: str, seed_urls: List[str]) -> List[Dict[str, Any]]:
+        return self.planner.plan(goal, seed_urls)
 
-        try:
-            return self.llm_client.generate_summary(task, result)
-        except Exception as exc:  # pragma: no cover - fallback path
-            self.logger.warning("LLM summary failed for task %s: %s", task.get("id"), exc)
-            snippet = result.get("text", "")
-            return snippet[:220].strip() or f"Fetched {result.get('url')}"
-
-    def _apply_correction(self, task: Dict[str, Any], exc: Exception) -> None:
-        task["retry_count"] = task.get("retry_count", 0) + 1
-        task["last_error"] = str(exc)
-        task["last_attempt"] = self._now()
-        task["corrective_note"] = "retry with smaller fetch scope and more restrictive extraction"
+    def _summarize_page(self, task: Dict[str, Any], result: Dict[str, Any]) -> str:
+        if self.llm_client is not None:
+            try:
+                return self.llm_client.generate_summary(task, result)
+            except Exception as exc:
+                self.logger.warning("Summary failed; using extractive fallback: %s", exc)
+        return result.get("text", "")[:300].strip() or f"Fetched {result['url']}"
 
     def run_cycle(self) -> Dict[str, Any]:
-        self._seed_default_tasks()
-        state = self.memory.load()
-        queue = state.get("queue", [])
+        tasks = self.memory.queued_tasks(self.policy.max_pages_per_cycle)
         processed: List[Dict[str, Any]] = []
         errors: List[Dict[str, Any]] = []
-
-        for task in list(queue):
-            if len(processed) >= self.policy.max_pages_per_cycle:
+        for task in tasks:
+            task_id, url = task["id"], task.get("url")
+            if not url or not self.policy.is_allowed_url(url):
+                error = {"task_id": task_id, "url": url, "timestamp": self._now(), "error": self.policy.explain_block(url or "")}
+                self.memory.add_error(error); self.memory.discard(task_id); errors.append(error); continue
+            if not self.budget.can_fetch() or not self.budget.can_use_tokens(250):
                 break
-
-            task_id = task.get("id", task.get("url", "task"))
-            task_url = task.get("url")
-
-            if not task_url:
-                errors.append({"task": task_id, "timestamp": self._now(), "error": "Task missing URL."})
-                queue.remove(task)
-                continue
-
-            if not self.policy.is_allowed_url(task_url):
-                errors.append({
-                    "task": task_id,
-                    "timestamp": self._now(),
-                    "error": self.policy.explain_block(task_url),
-                })
-                queue.remove(task)
-                continue
-
-            if not self.budget.can_fetch():
-                errors.append({
-                    "task": task_id,
-                    "timestamp": self._now(),
-                    "error": "Fetch budget exhausted for the day.",
-                })
-                break
-
-            if not self.budget.can_use_tokens(tokens=250):
-                errors.append({
-                    "task": task_id,
-                    "timestamp": self._now(),
-                    "error": "Token budget exhausted for the day.",
-                })
-                break
-
             try:
-                result = self.scraper.fetch(task_url)
+                result = self.scraper.fetch(url)
                 self.budget.consume(tokens=250, fetch_count=1)
                 summary = self._summarize_page(task, result)
-                observation = {
-                    "task": task_id,
-                    "url": result["url"],
-                    "title": result.get("title", ""),
-                    "summary": summary,
-                    "timestamp": self._now(),
-                    "domain": result.get("domain", ""),
-                }
+                observation = {"task_id": task_id, "url": url, "title": result.get("title", ""),
+                               "summary": summary, "text": result.get("text", ""), "timestamp": self._now()}
                 self.memory.add_observation(observation)
-                self.memory.add_decision({
-                    "task": task_id,
-                    "decision": "fetched and summarized page",
-                    "timestamp": self._now(),
-                    "summary": summary,
-                })
+                self.memory.mark_done(task_id)
+                self.memory.add_decision({"task_id": task_id, "decision": "fetched and summarized", "details": {"goal": task["goal"]}, "timestamp": self._now()})
                 processed.append(observation)
-                queue.remove(task)
-            except Exception as exc:  # pragma: no cover - resilient retry path
-                self.logger.warning("Task %s failed: %s", task_id, exc)
-                error = {
-                    "task": task_id,
-                    "url": task_url,
-                    "timestamp": self._now(),
-                    "error": str(exc),
-                }
-                errors.append(error)
-                self.memory.add_error(error)
-
-                if self.policy.should_retry(task, self.memory.last_errors(limit=100)):
-                    self._apply_correction(task, exc)
-                    task["retry_count"] = task.get("retry_count", 0)
-                    continue
-                queue.remove(task)
-
-        state["queue"] = queue
-        state["last_run"] = self._now()
-        self.memory.save(state)
-
-        return {
-            "processed": processed,
-            "errors": errors,
-            "budget": self.budget.snapshot(),
-            "queue_length": len(queue),
-        }
+                # Discovery is bounded by the cycle budget and the domain policy.
+                for link in self.frontier.discover(result, limit=3):
+                    self.planner.plan(task["goal"], [link])
+            except Exception as exc:
+                error = {"task_id": task_id, "url": url, "timestamp": self._now(), "error": str(exc)}
+                self.memory.add_error(error); errors.append(error)
+                if task["retries"] + 1 >= self.policy.max_errors_per_task:
+                    self.memory.discard(task_id)
+                else:
+                    self.memory.mark_retry(task_id, str(exc))
+        return {"processed": processed, "errors": errors, "budget": self.budget.snapshot(), "queue": self.memory.stats()}
