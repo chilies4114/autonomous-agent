@@ -1,0 +1,57 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Run Agent",
+      "type": "python",
+      "request": "launch",
+      "module": "autonomous_agent.main",
+      "args": [
+        "--goal",
+        "Collect information from example.com",
+        "--seed-url",
+        "https://example.com",
+        "--interval",
+        "60"
+      ],
+      "console": "integratedTerminal",
+      "justMyCode": true,
+      "env": {
+        "AUTO_AGENT_ALLOWED_DOMAINS": "example.com",
+        "AUTO_AGENT_MAX_PER_CYCLE": "5",
+        "AUTO_AGENT_FETCH_BUDGET_PER_DAY": "100",
+        "AUTO_AGENT_TOKEN_BUDGET_PER_DAY": "200000"
+      }
+    },
+    {
+      "name": "Run Tests",
+      "type": "python",
+      "request": "launch",
+      "module": "pytest",
+      "args": ["tests/test_agent.py", "-v"],
+      "console": "integratedTerminal",
+      "justMyCode": true
+    },
+    {
+      "name": "Debug Agent",
+      "type": "python",
+      "request": "launch",
+      "module": "autonomous_agent.main",
+      "args": [
+        "--goal",
+        "Debug test",
+        "--seed-url",
+        "https://example.com",
+        "--interval",
+        "5"
+      ],
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "stopOnEntry": false,
+      "env": {
+        "AUTO_AGENT_ALLOWED_DOMAINS": "example.com",
+        "AUTO_AGENT_PAUSED": "false"
+      }
+    }
+  ]
+}
